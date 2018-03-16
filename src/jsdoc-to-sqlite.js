@@ -43,9 +43,11 @@ var getPath = function (path)
     return section.replace(/\\/g, '/');
 };
 
-/*
+var insertTypeDef = function (block, queries)
+{
+    //  TODO
+};
 
-*/
 var insertMember = function (block, queries)
 {
     //  Quick bail-out check where it picks-up the copyright header by mistake
@@ -130,9 +132,66 @@ var insertFunction = function (block, queries)
         return;
     }
 
+    var query = '';
+    var params = [];
     var funcName = block.longname;
 
-    var query = 'INSERT INTO functions VALUES (';
+    //  Insert parameters first
+
+    if (Array.isArray(block.params) && block.params.length > 0)
+    {
+        for (var i = 0; i < block.params.length; i++)
+        {
+            var param = block.params[i];
+
+            if (!param.type)
+            {
+                console.log('>>> Parameter Error');
+                console.log(funcName);
+                console.log(param);
+                process.exit();
+            }
+
+            var types = param.type.names.join('|');
+            var optional = -1;
+
+            if (param.hasOwnProperty('optional'))
+            {
+                optional = (param.optional) ? 1 : 0;
+            }
+
+            var defaultValue = (param.hasOwnProperty('defaultvalue')) ? param.defaultvalue : '';
+
+            query = 'INSERT INTO params VALUES (';
+
+            query = query.concat('"' + funcName + '",');
+            query = query.concat('"' + param.name + '",');
+            query = query.concat(i + ',');
+            query = query.concat('"' + escape(param.description) + '",');
+            query = query.concat('"' + types + '",');
+            query = query.concat(optional + ',');
+            query = query.concat('"' + escape(defaultValue) + '"');
+
+            query = query.concat(')');
+
+            queries.push(query);
+
+            //  Add to the params array (for injection to the functions table)
+
+            var paramStr = param.name + ':' + types;
+
+            if (defaultValue !== '')
+            {
+                paramStr += ' = ' + escape(defaultValue);
+            }
+
+            params.push(paramStr);
+        }
+    }
+
+    //  Now insert the function / method itself
+
+    query = 'INSERT INTO functions VALUES (';
 
     query = query.concat('"' + funcName + '",');
     query = query.concat('"' + block.since + '",');
@@ -140,6 +199,21 @@ var insertFunction = function (block, queries)
     query = query.concat('"' + block.memberof + '",');
     query = query.concat('"' + escape(block.description) + '",');
     query = query.concat('"' + block.scope + '",');
+
+    //  Fires
+    if (Array.isArray(block.fires) && block.fires.length > 0)
+    {
+        var events = block.fires.join(',');
+
+        query = query.concat('"' + events + '",');
+    }
+    else
+    {
+        query = query.concat('"",');
+    }
+
+    //  Method signature
+    query = query.concat('"' + params.join(',')  + '",');
 
     //  Returns
     if (Array.isArray(block.returns) && block.returns.length > 0)
@@ -173,47 +247,6 @@ var insertFunction = function (block, queries)
     query = query.concat(')');
 
     queries.push(query);
-
-    if (Array.isArray(block.params) && block.params.length > 0)
-    {
-        for (var i = 0; i < block.params.length; i++)
-        {
-            var param = block.params[i];
-
-            if (!param.type)
-            {
-                console.log('>>> Parameter Error');
-                console.log(funcName);
-                console.log(param);
-                process.exit();
-            }
-
-            var types = param.type.names.join('|');
-            var optional = -1;
-
-            if (param.hasOwnProperty('optional'))
-            {
-                optional = (param.optional) ? 1 : 0;
-            }
-
-            var defaultValue = (param.hasOwnProperty('defaultvalue')) ? param.defaultvalue : '';
-
-            query = 'INSERT INTO params VALUES (';
-
-            query = query.concat('"' + funcName + '",');
-            query = query.concat('"' + param.name + '",');
-            query = query.concat('"' + escape(param.description) + '",');
-            query = query.concat('"' + types + '",');
-            query = query.concat(optional + ',');
-            query = query.concat('"' + escape(defaultValue) + '"');
-
-            query = query.concat(')');
-
-            queries.push(query);
-        }
-    }
-
-    // console.log(funcName);
 
     return query;
 };
@@ -278,6 +311,7 @@ var insertClass = function (block, queries)
 
             query = query.concat('"' + className + '",');
             query = query.concat('"' + param.name + '",');
+            query = query.concat(i + ',');
             query = query.concat('"' + escape(param.description) + '",');
             query = query.concat('"' + types + '",');
             query = query.concat(optional + ',');
@@ -294,9 +328,74 @@ var insertClass = function (block, queries)
     return query;
 };
 
+var insertEvent = function (block, queries)
+{
+    //  Ignore private: "access": "private"
+    if (block.hasOwnProperty('access') && block.access === 'private')
+    {
+        return;
+    }
+
+    var eventName = escape(block.longname);
+
+    var query = 'INSERT INTO event VALUES (';
+
+    query = query.concat('"' + eventName + '",');
+    query = query.concat('"' + block.since + '",');
+    query = query.concat('"' + block.name + '",');
+    query = query.concat('"' + block.memberof + '",');
+    query = query.concat('"' + escape(block.description) + '",');
+    query = query.concat('"' + block.meta.filename + '",');
+    query = query.concat(block.meta.lineno + ',');
+    query = query.concat('"' + escape(getPath(block.meta.path)) + '"');
+
+    query = query.concat(')');
+
+    queries.push(query);
+
+    //  Callback Params
+
+    if (Array.isArray(block.params) && block.params.length > 0)
+    {
+        for (var i = 0; i < block.params.length; i++)
+        {
+            var param = block.params[i];
+
+            var types = param.type.names.join('|');
+            var optional = -1;
+
+            if (param.hasOwnProperty('optional'))
+            {
+                optional = (param.optional) ? 1 : 0;
+            }
+
+            var defaultValue = (param.hasOwnProperty('defaultvalue')) ? param.defaultvalue : '';
+
+            query = 'INSERT INTO params VALUES (';
+
+            query = query.concat('"' + eventName+ '",');
+            query = query.concat('"' + param.name + '",');
+            query = query.concat(i + ',');
+            query = query.concat('"' + escape(param.description) + '",');
+            query = query.concat('"' + types + '",');
+            query = query.concat(optional + ',');
+            query = query.concat('"' + escape(defaultValue) + '"');
+
+            query = query.concat(')');
+
+            queries.push(query);
+        }
+    }
+
+    // console.log(eventName);
+
+    return query;
+};
+
 var classQueries = [];
 var functionQueries = [];
 var memberQueries = [];
+var eventQueries = [];
 
 for (var i = 0; i < data.docs.length; i++)
 {
@@ -315,6 +414,10 @@ for (var i = 0; i < data.docs.length; i++)
         case 'member':
             insertMember(block, memberQueries);
             break;
+
+        case 'event':
+            insertEvent(block, eventQueries);
+            break;
     }
 }
 
@@ -332,9 +435,15 @@ console.log('Processing Member Queries: ', memberQueries.length);
 
 db.transaction(memberQueries).run();
 
+console.log('Processing Event Queries: ', eventQueries.length);
+
+db.transaction(eventQueries).run();
+
 console.log('Complete');
 
 db.close();
+
+fs.copySync('./db/phaser-working.db', 'G:/www/phaser.io/site/app/database/docs_v3.sqlite');
 
 //  Debug insert
 // for (var i = 0; i < memberQueries.length; i++)
